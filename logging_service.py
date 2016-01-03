@@ -20,7 +20,7 @@ LOGGING_LEVELS = [INFO, DEBUG, WARNING, ERROR]
 __all__ = [
     'DEBUG', 'ERROR', 'FileLogging', 'INFO', 'Logging', 'PostLogging', 'StreamLogging', 'WARNING'
 ]
-__version__ = '1.2.4'
+__version__ = '2.0.0'
 
 
 def track_function_call(func):
@@ -40,6 +40,12 @@ def _level_is_valid(level):
 def _raise_level_error_if_not_valid(level):
     if not _level_is_valid(level):
         raise LevelNotValidError('Level %s is not valid, use %s' % (level, ','.join(str(LOGGING_LEVELS))))
+
+
+def _change_level(level):
+    _raise_level_error_if_not_valid(level)
+
+    logging.getLogger().setLevel(level)
 
 
 class FunctionNotCalledError(Exception):
@@ -69,18 +75,18 @@ class Logging(object):
         return cls
 
     @classmethod
-    def send(cls, message):
+    def send(cls, message, level):
         for srv in cls._srvs:
-            srv.send_message(message)
+            srv.send_message(message, level)
         return cls
 
 
 class LoggingInterface(object):
 
     def __init__(self):
-        pass
+        self._logger = logging.getLogger(__name__)
 
-    def send_message(self, message):
+    def send_message(self, message, level):
         raise NotImplementedError
 
     def _set_handler(self, formatter):
@@ -92,20 +98,17 @@ class LoggingInterface(object):
 
 class StreamLogging(LoggingInterface):
 
-    def __init__(self, level):
+    def __init__(self):
         super(StreamLogging, self).__init__()
         self._logger = logging.getLogger('StreamLogging')
         formater = self._set_formatter()
         handler = self._set_handler(formater)
         self._logger.addHandler(handler)
 
-        self._level = level
-        _raise_level_error_if_not_valid(self._level)
+    def send_message(self, message, level):
+        _change_level(level)
 
-        self._logger.setLevel(self._level)
-
-    def send_message(self, message):
-        self._logger.log(msg=message, level=self._level)
+        self._logger.log(msg=message, level=level)
 
     def _set_handler(self, formatter):
         handler = logging.StreamHandler()
@@ -118,7 +121,7 @@ class StreamLogging(LoggingInterface):
 
 class PostLogging(LoggingInterface):
 
-    def __init__(self, level, host, port, url_path, method='POST'):
+    def __init__(self, host, port, url_path, method='POST'):
         super(PostLogging, self).__init__()
         self._host = host
 
@@ -134,19 +137,16 @@ class PostLogging(LoggingInterface):
         handler = self._set_handler(formater)
         self._logger.addHandler(handler)
 
-        self._level = level
-        _raise_level_error_if_not_valid(self._level)
+    def send_message(self, message, level):
+        _change_level(level)
 
-        self._logger.setLevel(self._level)
-
-    def send_message(self, message):
         import json
 
         data = {
-            'type': logging.getLevelName(self._level),
+            'type': logging.getLevelName(level),
             'msg': message
         }
-        self._logger.log(level=self._level, msg=json.dumps(data))
+        self._logger.log(level=level, msg=json.dumps(data))
 
     def _set_handler(self, formatter):
         host = self._host + ':' + self._port
@@ -168,7 +168,7 @@ class PostLogging(LoggingInterface):
 
 class FileLogging(LoggingInterface):
 
-    def __init__(self, level, path_file_name=None):
+    def __init__(self, path_file_name=None):
         super(FileLogging, self).__init__()
         self._path_file = path_file_name if path_file_name else 'log.log'
         self._logger = logging.getLogger('FileLogging')
@@ -176,13 +176,10 @@ class FileLogging(LoggingInterface):
         handler = self._set_handler(formatter)
         self._logger.addHandler(handler)
 
-        self._level = level
-        _raise_level_error_if_not_valid(self._level)
+    def send_message(self, message, level):
+        _change_level(level)
 
-        self._logger.setLevel(self._level)
-
-    def send_message(self, message):
-        self._logger.log(msg=message, level=self._level)
+        self._logger.log(msg=message, level=level)
 
     def _set_handler(self, formatter):
         if self._path_file:
@@ -202,22 +199,22 @@ class FileLogging(LoggingInterface):
 
 
 if __name__ == '__main__':
-    srvStream = StreamLogging(level=ERROR)
-    srvFile = FileLogging(level=DEBUG)
-    srvPost = PostLogging(url_path='/message', host='127.0.0.1', port=8000, level=WARNING)
+    srvStream = StreamLogging()
+    srvFile = FileLogging()
+    srvPost = PostLogging(url_path='/message', host='127.0.0.1', port=8000)
 
     my_services = [srvStream, srvFile, srvPost]
-    Logging.set_services(srvs=my_services).send('This is a PoC to try my logging service')
-    Logging.send('This is another sentence I send')
+    Logging.set_services(srvs=my_services).send('This is a PoC to try my logging service', level=WARNING)
+    Logging.send('This is another sentence I send', level=DEBUG)
 
     my_services = [srvFile]
     Logging.set_services(srvs=my_services)
-    Logging.send('This is my last message')
+    Logging.send('This is my last message', level=ERROR)
 
     my_services = [srvPost]
     Logging.set_services(my_services)
-    Logging.send('I send a message')
+    Logging.send('I send a message', level=INFO)
 
     my_services = [srvPost, srvFile, srvStream]
     Logging.set_services(my_services)
-    Logging.send('Some characters: ñÑ%&/()=?¿\ª')
+    Logging.send('Some characters: ñÑ%&/()=?¿\ª', level=ERROR)
